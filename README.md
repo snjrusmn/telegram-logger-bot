@@ -8,8 +8,8 @@
 [![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-2CA5E0?logo=telegram&logoColor=white)](https://docs.aiogram.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://sqlite.org)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green?logo=opensourceinitiative&logoColor=white)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/snjrusmn/telegram-logger-bot/releases)
-[![Tests](https://img.shields.io/badge/tests-46%20passed-brightgreen?logo=pytest&logoColor=white)](#testing)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)](https://github.com/snjrusmn/telegram-logger-bot/releases)
+[![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen?logo=pytest&logoColor=white)](#testing)
 
 [English](#why-this-tool) | [Русский](#зачем-этот-инструмент)
 
@@ -320,10 +320,10 @@ ORDER BY e.date;
 python -m pytest tests/ -v
 ```
 
-The test suite includes 46 tests covering:
+The test suite includes 50 tests covering:
 - Configuration parsing (17 tests) &mdash; env variables, defaults, edge cases
 - Database operations (15 tests) &mdash; CRUD, upserts, schema validation
-- Handler logic (14 tests) &mdash; message extraction, media metadata, forward parsing
+- Handler logic (18 tests) &mdash; message extraction, media metadata, forward parsing, filename sanitization
 
 ---
 

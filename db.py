@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Optional
 
 import aiosqlite
 
@@ -76,7 +76,6 @@ async def upsert_chat(
                updated_at = datetime('now')""",
         (chat_id, title, chat_type),
     )
-    await db.commit()
 
 
 async def upsert_user(
@@ -96,7 +95,6 @@ async def upsert_user(
                updated_at = datetime('now')""",
         (user_id, username, first_name, last_name),
     )
-    await db.commit()
 
 
 async def insert_message(
@@ -133,7 +131,6 @@ async def insert_message(
             1 if is_edit else 0,
         ),
     )
-    await db.commit()
 
 
 async def insert_event(
@@ -153,4 +150,8 @@ async def insert_event(
            VALUES (?, ?, ?, ?, ?)""",
         (chat_id, user_id, event_type, data_json, date),
     )
+
+
+async def commit(db: aiosqlite.Connection) -> None:
+    """Commit all pending changes. Call once after all operations for a message."""
     await db.commit()

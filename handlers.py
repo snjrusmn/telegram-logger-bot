@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Optional, Tuple
 
 import aiosqlite
@@ -8,7 +9,7 @@ from aiogram.enums import ContentType
 from aiogram.types import Message, MessageOriginUser, MessageOriginChat, MessageOriginHiddenUser, MessageOriginChannel
 
 from config import Config
-from db import upsert_chat, upsert_user, insert_message, insert_event
+from db import upsert_chat, upsert_user, insert_message, insert_event, commit
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,12 @@ def _extract_media_meta(message: Message) -> Tuple[Optional[str], Optional[dict]
     return None, None, str(ct) if ct else "unknown"
 
 
+def _sanitize_filename(name: str) -> str:
+    """Remove unsafe characters from filename."""
+    name = os.path.basename(name)
+    return re.sub(r'[^\w\-.]', '_', name)
+
+
 async def _save_chat_and_user(db: aiosqlite.Connection, message: Message) -> None:
     """Upsert chat and user info from a message."""
     await upsert_chat(db, message.chat.id, message.chat.title, message.chat.type)
@@ -171,6 +178,7 @@ async def _log_message(
         fwd_name=fwd_name,
         is_edit=is_edit,
     )
+    await commit(db)
 
 
 def setup_router() -> Router:
@@ -198,7 +206,8 @@ def setup_router() -> Router:
                     file = await message.bot.get_file(file_id)
                     media_dir = config.media_dir
                     os.makedirs(media_dir, exist_ok=True)
-                    dest = os.path.join(media_dir, f"{message.chat.id}_{message.message_id}_{file.file_path.split('/')[-1]}")
+                    safe_name = _sanitize_filename(file.file_path.split('/')[-1])
+                    dest = os.path.join(media_dir, f"{message.chat.id}_{message.message_id}_{safe_name}")
                     await message.bot.download_file(file.file_path, dest)
                 except Exception:
                     logger.exception("Error downloading media for message %s", message.message_id)
@@ -250,6 +259,8 @@ def setup_router() -> Router:
                     date=date, user_id=message.from_user.id if message.from_user else None,
                     data={"pinned_message_id": message.pinned_message.message_id},
                 )
+
+            await commit(db)
 
         except Exception:
             logger.exception("Error logging service event in chat %s", message.chat.id)

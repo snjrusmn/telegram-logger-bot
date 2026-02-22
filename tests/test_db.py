@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 import aiosqlite
 
-from db import init_db, upsert_chat, upsert_user, insert_message, insert_event
+from db import init_db, upsert_chat, upsert_user, insert_message, insert_event, commit
 
 
 @pytest_asyncio.fixture

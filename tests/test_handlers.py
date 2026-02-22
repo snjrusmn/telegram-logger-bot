@@ -8,7 +8,7 @@ import aiosqlite
 
 from config import Config
 from db import init_db
-from handlers import setup_router, _extract_forward_info, _extract_media_meta
+from handlers import setup_router, _extract_forward_info, _extract_media_meta, _sanitize_filename
 
 
 @pytest_asyncio.fixture
@@ -348,3 +348,23 @@ async def test_setup_router_returns_router():
     from aiogram import Router
     router = setup_router()
     assert isinstance(router, Router)
+
+
+# --- _sanitize_filename tests ---
+
+def test_sanitize_filename_normal():
+    assert _sanitize_filename("photo.jpg") == "photo.jpg"
+
+
+def test_sanitize_filename_with_path():
+    assert _sanitize_filename("photos/file_123.jpg") == "file_123.jpg"
+
+
+def test_sanitize_filename_with_dots_traversal():
+    assert _sanitize_filename("../../etc/passwd") == "passwd"
+
+
+def test_sanitize_filename_with_special_chars():
+    result = _sanitize_filename("file name (1).jpg")
+    assert "/" not in result
+    assert ".." not in result
