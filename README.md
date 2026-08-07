@@ -349,4 +349,4 @@ The test suite includes 50 tests covering:
 
 This project is licensed under the [Apache License 2.0](LICENSE).
 
-Copyright 2026 Sanzhar Usmanov.
+Copyright 2026 Sanjar Usman.
