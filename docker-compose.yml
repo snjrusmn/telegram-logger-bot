@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: telegram-logger-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      # Bind mount, not a named volume: the database is meant to be read by other
+      # tools on the host and picked up by ordinary file backups.
+      - ./data:/data

@@ -37,7 +37,7 @@ async def main() -> None:
     dp["config"] = config
 
     # Register handlers
-    router = setup_router()
+    router = setup_router(config.allowed_chat_ids)
     dp.include_router(router)
 
     # Shutdown hook
@@ -48,8 +48,21 @@ async def main() -> None:
     dp.shutdown.register(on_shutdown)
 
     # Start polling
-    logger.info("Bot started. Logging messages from all chats.")
+    me = await bot.get_me()
+    if config.allowed_chat_ids:
+        logger.info("Bot @%s started. Logging chats: %s", me.username,
+                    ", ".join(str(c) for c in sorted(config.allowed_chat_ids)))
+    else:
+        logger.info("Bot @%s started. Logging messages from all chats.", me.username)
     logger.info("Download media: %s", config.download_media)
+
+    # With privacy mode on, a group bot only receives commands addressed to it —
+    # it stays up, logs nothing, and looks perfectly healthy. Say so out loud.
+    if not me.can_read_all_group_messages:
+        logger.warning(
+            "Privacy mode is ON: this bot will NOT see ordinary group messages. "
+            "Fix in @BotFather: /setprivacy -> select @%s -> Disable, "
+            "then remove and re-add the bot to the group.", me.username)
     try:
         await dp.start_polling(bot)
     finally:

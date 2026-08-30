@@ -8,7 +8,10 @@ import aiosqlite
 
 from config import Config
 from db import init_db
-from handlers import setup_router, _extract_forward_info, _extract_media_meta, _sanitize_filename
+from handlers import (
+    setup_router, _extract_forward_info, _extract_media_meta, _sanitize_filename,
+    _with_group,
+)
 
 
 @pytest_asyncio.fixture
@@ -66,6 +69,7 @@ def _make_message(
     left_chat_member=None,
     new_chat_title=None,
     pinned_message=None,
+    media_group_id=None,
 ):
     msg = MagicMock(spec=[
         "text", "chat", "from_user", "message_id", "content_type",
@@ -73,7 +77,7 @@ def _make_message(
         "photo", "video", "document", "audio", "voice",
         "video_note", "sticker", "animation", "caption",
         "new_chat_members", "left_chat_member", "new_chat_title",
-        "pinned_message", "bot",
+        "pinned_message", "media_group_id", "bot",
     ])
     msg.text = text
     msg.chat = chat or _make_chat()
@@ -96,6 +100,7 @@ def _make_message(
     msg.left_chat_member = left_chat_member
     msg.new_chat_title = new_chat_title
     msg.pinned_message = pinned_message
+    msg.media_group_id = media_group_id
     msg.bot = AsyncMock()
     return msg
 
@@ -348,6 +353,150 @@ async def test_setup_router_returns_router():
     from aiogram import Router
     router = setup_router()
     assert isinstance(router, Router)
+
+
+# --- _with_group tests ---
+
+def test_with_group_no_album_leaves_meta_alone():
+    meta = {"size": 100}
+    msg = _make_message(media_group_id=None)
+    assert _with_group(meta, msg) is meta
+
+
+def test_with_group_adds_album_id():
+    msg = _make_message(media_group_id="13847290184")
+    meta = _with_group({"size": 100}, msg)
+    assert meta == {"size": 100, "group": "13847290184"}
+
+
+def test_with_group_does_not_mutate_original():
+    original = {"size": 100}
+    msg = _make_message(media_group_id="13847290184")
+    _with_group(original, msg)
+    assert original == {"size": 100}
+
+
+def test_with_group_handles_missing_meta():
+    msg = _make_message(media_group_id="13847290184")
+    assert _with_group(None, msg) == {"group": "13847290184"}
+
+
+# --- Media download tests (through the real handler) ---
+
+def _handler_by_name(router, name):
+    for handler in router.message.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"handler {name} is not registered")
+
+
+@pytest.mark.asyncio
+async def test_downloaded_media_records_its_path(db, tmp_path):
+    """Whatever reads this database later must not have to guess the filename."""
+    from aiogram.enums import ContentType
+
+    doc = MagicMock()
+    doc.file_id = "doc_555"
+    doc.file_size = 100000
+    doc.mime_type = "application/pdf"
+    doc.file_name = "Оплата.pdf"
+
+    msg = _make_message(
+        content_type=ContentType.DOCUMENT, document=doc, message_id=77,
+        caption="оплата GULAMOV AZIZ по 26UZ041", media_group_id="1384729",
+    )
+    msg.bot.get_file.return_value.file_path = "documents/file_5.pdf"
+
+    config = Config(bot_token="t", download_media=True, data_dir=tmp_path)
+    on_media = _handler_by_name(setup_router(), "on_media")
+    await on_media(msg, db, config)
+
+    cursor = await db.execute("SELECT text, media_meta FROM messages WHERE msg_id = 77")
+    text, meta_json = await cursor.fetchone()
+    meta = json.loads(meta_json)
+    assert text == "оплата GULAMOV AZIZ по 26UZ041"
+    assert meta["group"] == "1384729"
+    assert meta["path"] == str(tmp_path / "media" / "-1001_77_file_5.pdf")
+    msg.bot.download_file.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_download_still_logs_the_message(db, tmp_path):
+    """Telegram refuses files over 20 MB — the record must survive anyway."""
+    from aiogram.enums import ContentType
+
+    doc = MagicMock()
+    doc.file_id = "doc_666"
+    doc.file_size = 45_000_000
+    doc.mime_type = "application/pdf"
+    doc.file_name = "Договор.pdf"
+
+    msg = _make_message(content_type=ContentType.DOCUMENT, document=doc, message_id=88)
+    msg.bot.get_file.side_effect = Exception("file is too big")
+
+    config = Config(bot_token="t", download_media=True, data_dir=tmp_path)
+    on_media = _handler_by_name(setup_router(), "on_media")
+    await on_media(msg, db, config)
+
+    cursor = await db.execute(
+        "SELECT media_file_id, media_meta FROM messages WHERE msg_id = 88")
+    file_id, meta_json = await cursor.fetchone()
+    meta = json.loads(meta_json)
+    assert file_id == "doc_666"
+    assert meta["name"] == "Договор.pdf"
+    assert "path" not in meta          # no path == the file was never saved
+
+
+@pytest.mark.asyncio
+async def test_command_keeps_its_text(db, tmp_path):
+    """The text handler skips commands, so they fall through to the catch-all.
+    Store what was typed, not the name of the content type."""
+    msg = _make_message(text="/start", message_id=1)
+
+    config = Config(bot_token="t", download_media=False, data_dir=tmp_path)
+    on_other = _handler_by_name(setup_router(), "on_other")
+    await on_other(msg, db, config)
+
+    cursor = await db.execute("SELECT type, text FROM messages WHERE msg_id = 1")
+    msg_type, text = await cursor.fetchone()
+    assert msg_type == "other"
+    assert text == "/start"
+
+
+# --- Chat allowlist tests ---
+
+@pytest.mark.asyncio
+async def test_no_allowlist_logs_every_chat():
+    """Default behaviour must not change: no allowlist, no chat filter."""
+    router = setup_router()
+    passed, _ = await router.message.check_root_filters(_make_message())
+    assert passed is True
+
+
+@pytest.mark.asyncio
+async def test_allowlist_passes_listed_chat():
+    router = setup_router([-4228822135])
+    msg = _make_message(chat=_make_chat(chat_id=-4228822135))
+    passed, _ = await router.message.check_root_filters(msg)
+    assert passed is True
+
+
+@pytest.mark.asyncio
+async def test_allowlist_blocks_other_chat():
+    """A bot added to an unrelated group must not quietly collect it."""
+    router = setup_router([-4228822135])
+    msg = _make_message(chat=_make_chat(chat_id=-1009999999))
+    passed, _ = await router.message.check_root_filters(msg)
+    assert passed is False
+
+
+@pytest.mark.asyncio
+async def test_allowlist_applies_to_edited_messages_too():
+    router = setup_router([-4228822135])
+    allowed = _make_message(chat=_make_chat(chat_id=-4228822135))
+    other = _make_message(chat=_make_chat(chat_id=-1009999999))
+    assert (await router.edited_message.check_root_filters(allowed))[0] is True
+    assert (await router.edited_message.check_root_filters(other))[0] is False
 
 
 # --- _sanitize_filename tests ---

@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 import aiosqlite
 from aiogram import Router, F
@@ -138,6 +138,21 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\-.]', '_', name)
 
 
+def _with_group(meta: Optional[dict], message: Message) -> Optional[dict]:
+    """Attach the album id to media metadata.
+
+    Telegram delivers an album as separate messages and puts the caption on the
+    first one only. Without media_group_id there is no way to tell which files
+    the caption belongs to — and a caption is often the only hint about what the
+    attached files are.
+    """
+    if not message.media_group_id:
+        return meta
+    meta = dict(meta or {})
+    meta["group"] = message.media_group_id
+    return meta
+
+
 async def _save_chat_and_user(db: aiosqlite.Connection, message: Message) -> None:
     """Upsert chat and user info from a message."""
     await upsert_chat(db, message.chat.id, message.chat.title, message.chat.type)
@@ -181,9 +196,18 @@ async def _log_message(
     await commit(db)
 
 
-def setup_router() -> Router:
-    """Create and return a router with all handlers registered."""
+def setup_router(allowed_chat_ids: Optional[Iterable[int]] = None) -> Router:
+    """Create and return a router with all handlers registered.
+
+    allowed_chat_ids restricts logging to those chats. Empty or None keeps the
+    default behaviour — every chat the bot is a member of gets logged.
+    """
     router = Router()
+
+    allowed = set(allowed_chat_ids or ())
+    if allowed:
+        router.message.filter(F.chat.id.in_(allowed))
+        router.edited_message.filter(F.chat.id.in_(allowed))
 
     # --- Text messages ---
     @router.message(F.text, ~F.text.startswith("/"))
@@ -200,6 +224,7 @@ def setup_router() -> Router:
         try:
             await _save_chat_and_user(db, message)
             file_id, meta, msg_type = _extract_media_meta(message)
+            meta = _with_group(meta, message)
 
             if config.download_media and file_id:
                 try:
@@ -209,6 +234,10 @@ def setup_router() -> Router:
                     safe_name = _sanitize_filename(file.file_path.split('/')[-1])
                     dest = os.path.join(media_dir, f"{message.chat.id}_{message.message_id}_{safe_name}")
                     await message.bot.download_file(file.file_path, dest)
+                    # Record where the file landed: anything reading this database
+                    # later should not have to guess the name back from the pattern.
+                    meta = dict(meta or {})
+                    meta["path"] = dest
                 except Exception:
                     logger.exception("Error downloading media for message %s", message.message_id)
 
@@ -283,7 +312,7 @@ def setup_router() -> Router:
                 db, message, msg_type=msg_type,
                 text=message.caption,
                 media_file_id=file_id,
-                media_meta=meta,
+                media_meta=_with_group(meta, message),
                 is_edit=True,
             )
         except Exception:
@@ -294,9 +323,11 @@ def setup_router() -> Router:
     async def on_other(message: Message, db: aiosqlite.Connection, config: Config) -> None:
         try:
             await _save_chat_and_user(db, message)
+            # Commands land here (the text handler skips them). Keep what the person
+            # actually wrote — storing "ContentType.TEXT" instead loses the message.
             await _log_message(
                 db, message, msg_type="other",
-                text=str(message.content_type),
+                text=message.text or message.caption or str(message.content_type),
             )
         except Exception:
             logger.exception("Error logging unknown message type in chat %s", message.chat.id)

@@ -12,6 +12,7 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     monkeypatch.delenv("DOWNLOAD_MEDIA", raising=False)
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("ALLOWED_CHAT_IDS", raising=False)
 
 
 def test_missing_bot_token_raises(monkeypatch):
@@ -73,3 +74,34 @@ def test_media_dir_property(monkeypatch):
     monkeypatch.setenv("BOT_TOKEN", "token")
     cfg = load_config(env_path="/dev/null")
     assert cfg.media_dir == Path("./data/media")
+
+
+def test_allowed_chat_ids_default_is_empty(monkeypatch):
+    """No allowlist configured means: log every chat, as before."""
+    monkeypatch.setenv("BOT_TOKEN", "token")
+    cfg = load_config(env_path="/dev/null")
+    assert cfg.allowed_chat_ids == frozenset()
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("-4228822135", {-4228822135}),
+    ("-1001234567890,-4228822135", {-1001234567890, -4228822135}),
+    (" -100123 , -4228822135 ", {-100123, -4228822135}),
+    ("-100123;-4228822135", {-100123, -4228822135}),
+    ("-100123,,", {-100123}),
+    ("", set()),
+    ("   ", set()),
+])
+def test_allowed_chat_ids_parsing(monkeypatch, value, expected):
+    monkeypatch.setenv("BOT_TOKEN", "token")
+    monkeypatch.setenv("ALLOWED_CHAT_IDS", value)
+    cfg = load_config(env_path="/dev/null")
+    assert cfg.allowed_chat_ids == frozenset(expected)
+
+
+def test_allowed_chat_ids_rejects_garbage(monkeypatch):
+    """A typo in the allowlist must fail loudly, not silently log everything."""
+    monkeypatch.setenv("BOT_TOKEN", "token")
+    monkeypatch.setenv("ALLOWED_CHAT_IDS", "-4228822135,office chat")
+    with pytest.raises(ValueError, match="ALLOWED_CHAT_IDS"):
+        load_config(env_path="/dev/null")

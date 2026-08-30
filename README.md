@@ -59,7 +59,9 @@ Add this bot to your group chats. It silently records every message, media metad
 | **Forward origin** | Full chain: user, chat, channel, or hidden user |
 | **Normalized DB** | 4 tables, no data duplication &mdash; minimal token cost for AI |
 | **Media download** | Optional: save files to disk or just log metadata |
+| **Albums kept whole** | `media_group_id` ties an album's files to the caption Telegram puts on the first one |
 | **Multi-chat** | One bot instance handles unlimited groups simultaneously |
+| **Chat allowlist** | Optional: confine logging to named chats, so being added elsewhere collects nothing |
 | **Error resilient** | Errors in one handler don't crash the bot or lose other messages |
 
 ---
@@ -112,11 +114,27 @@ Add the bot to any group chat. It will start logging immediately. No commands ne
 | `BOT_TOKEN` | *(required)* | Telegram Bot API token from @BotFather |
 | `DOWNLOAD_MEDIA` | `false` | Download media files to disk. Accepts: `true`, `false`, `1`, `0`, `yes`, `no` |
 | `DATA_DIR` | `./data` | Directory for the SQLite database and downloaded media files |
+| `ALLOWED_CHAT_IDS` | *(empty)* | Comma-separated chat ids to log. Empty means every chat the bot is in. Set it when the bot must stay confined to one group even if someone adds it elsewhere |
 
 When `DOWNLOAD_MEDIA=true`, files are saved to `DATA_DIR/media/` with the naming pattern:
 ```
 {chat_id}_{message_id}_{original_filename}
 ```
+The saved path is also stored in the message's media metadata as `path`, so a reader
+of the database does not have to reconstruct filenames. Note that the Telegram Bot API
+only hands bots files up to **20 MB** — a larger file is still logged (id, name, size),
+just not downloaded, and its metadata carries no `path`.
+
+### Docker
+
+```bash
+cp .env.example .env      # fill in BOT_TOKEN
+docker compose up -d --build
+docker compose logs -f
+```
+
+The database and media land in `./data` next to the compose file — a plain bind mount,
+so ordinary file backups and other tools on the host can reach them.
 
 ---
 
@@ -130,17 +148,20 @@ telegram-logger-bot/
 ├── db.py                  # SQLite layer: schema, upsert, insert functions
 ├── handlers.py            # All message/media/event handlers (aiogram Router)
 │
-├── tests/                 # Test suite (46 tests)
+├── tests/                 # Test suite (69 tests)
 │   ├── __init__.py
-│   ├── test_config.py     # Config parsing tests (17 tests)
+│   ├── test_config.py     # Config parsing tests (26 tests)
 │   ├── test_db.py         # Database operations tests (15 tests)
-│   └── test_handlers.py   # Handler logic & media extraction tests (14 tests)
+│   └── test_handlers.py   # Handler logic & media extraction tests (28 tests)
 │
 ├── data/                  # Created at runtime (gitignored)
 │   ├── logger.db          # SQLite database
 │   └── media/             # Downloaded files (if enabled)
 │
 ├── docs/plans/            # Implementation plans
+├── Dockerfile             # Container image
+├── docker-compose.yml     # Deployment: bind-mounted ./data volume
+├── .dockerignore
 ├── .env.example           # Environment template
 ├── .gitignore
 ├── requirements.txt       # Python dependencies
@@ -233,8 +254,14 @@ The database is designed for **minimal token consumption** when used with AI/LLM
 Only non-null fields are stored to save space:
 
 ```json
-{"size": 52480, "mime": "image/jpeg", "width": 1920, "height": 1080}
+{"size": 52480, "mime": "image/jpeg", "width": 1920, "height": 1080,
+ "group": "13847290184", "path": "/data/media/-4228822135_881_file_12.jpg"}
 ```
+
+| Field | Meaning |
+|:------|:--------|
+| `group` | Album id, present only when the file arrived as part of an album. Telegram splits an album into separate messages and puts the caption on the first one — this is what ties the caption to the rest of the files |
+| `path` | Where the file was saved. Present only when the download succeeded |
 
 ---
 
