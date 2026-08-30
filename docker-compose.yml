@@ -10,3 +10,18 @@ services:
       # Bind mount, not a named volume: the database is meant to be read by other
       # tools on the host and picked up by ordinary file backups.
       - ./data:/data
+    # Checks the freshness of the bot's own pulse file, and nothing else. It never
+    # contacts Telegram: an unreachable Telegram is not this bot's failure, it keeps
+    # running and retrying.
+    #
+    # !!! THE MARK IS INFORMATIONAL. DO NOT RESTART THIS CONTAINER BECAUSE OF IT. !!!
+    # No autoheal, no watchdog acting on "unhealthy". On 19.08.2026 the neighbouring
+    # ezs-utility-bot had a watchdog that read an unreachable Telegram as a dead
+    # process: 27 restarts in 40 minutes, an outage of its own making. "unhealthy"
+    # here means "a human should look", never "restart it".
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

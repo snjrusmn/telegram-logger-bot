@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from config import load_config
 from db import init_db
 from handlers import setup_router
+from health import health_path, heartbeat
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,6 +81,9 @@ async def main() -> None:
     # collected 27 restarts in 40 minutes on 19.08.2026: an unreachable Telegram was
     # treated as a dead process. Retry in place instead, at a pace that does not flood
     # the log, and let the container keep running.
+    # The pulse runs alongside polling, so a wedged bot stops looking healthy.
+    pulse = asyncio.create_task(heartbeat(bot, health_path(config.data_dir)))
+
     try:
         while True:
             try:
@@ -89,6 +93,7 @@ async def main() -> None:
                 logger.exception("Polling stopped on error, retrying in %d s", POLL_RETRY_DELAY)
                 await asyncio.sleep(POLL_RETRY_DELAY)
     finally:
+        pulse.cancel()
         logger.info("Shutting down, closing database...")
         await db.close()
         await bot.session.close()
